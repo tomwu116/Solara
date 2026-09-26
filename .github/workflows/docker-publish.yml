@@ -57,7 +57,7 @@ jobs:
           file: ${{ matrix.dockerfile }} # 动态选择 Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/Solara:${{ matrix.tag_suffix }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/solara:${{ matrix.tag_suffix }}
 
   # 收尾 Job：将各架构子镜像合并为一个真正的多架构镜像
   create-manifest:
@@ -75,7 +75,7 @@ jobs:
 
       - name: Create and push Multi-Arch Manifest
         run: |
-          REPO="${{ secrets.DOCKERHUB_USERNAME }}/Solara"
+          REPO="${{ secrets.DOCKERHUB_USERNAME }}/solara"
           DATE_STR="${{ env.DATE }}"
           CUSTOM="${{ inputs.custom_tag }}"
 
