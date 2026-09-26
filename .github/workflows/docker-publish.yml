@@ -1,46 +1,101 @@
-name: Docker Publish
+name: Docker Image CI
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+    inputs:
+      custom_tag:
+        description: '手动指定的 Tag 名称（可选，例如：v1.0.0）'
+        required: false
+        default: ''
 
 jobs:
-  build-and-push-image:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            tag_suffix: amd64
+            dockerfile: Dockerfile
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            tag_suffix: arm64
+            dockerfile: Dockerfile
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm/v7
+            tag_suffix: armv7
+            dockerfile: Dockerfile-armv7  # 指定 armv7 专属的 Dockerfile
+
+    runs-on: ${{ matrix.runner }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Log in to the Container registry
+      - name: Get current date
+        id: date
+        run: echo "DATE=$(date -u +'%Y%m%d')" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-
-      - name: Build and push Docker image
+      # 仅推送带架构后缀的子镜像，供后续 manifest 合并
+      - name: Build and push Single Arch Image
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ${{ matrix.dockerfile }} # 动态选择 Dockerfile
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/Solara:${{ matrix.tag_suffix }}
+
+  # 收尾 Job：将各架构子镜像合并为一个真正的多架构镜像
+  create-manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get current date
+        run: echo "DATE=$(date -u +'%Y%m%d')" >> $GITHUB_ENV
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create and push Multi-Arch Manifest
+        run: |
+          REPO="${{ secrets.DOCKERHUB_USERNAME }}/Solara"
+          DATE_STR="${{ env.DATE }}"
+          CUSTOM="${{ inputs.custom_tag }}"
+
+          # 函数：合并并推送 Manifest
+          create_and_push() {
+            local TARGET_TAG=$1
+            docker manifest create ${REPO}:${TARGET_TAG} \
+              --amend ${REPO}:amd64 \
+              --amend ${REPO}:arm64 \
+              --amend ${REPO}:armv7
+            docker manifest push ${REPO}:${TARGET_TAG}
+          }
+
+          # 1. 推送 latest
+          create_and_push "latest"
+
+          # 2. 推送 日期版本 (例如 20260909)
+          create_and_push "${DATE_STR}"
+
+          # 3. 如果有手动指定的 Tag，也推一份
+          if [ -n "$CUSTOM" ]; then
+            create_and_push "${CUSTOM}"
+          fi
