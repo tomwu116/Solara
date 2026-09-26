@@ -28,7 +28,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             platform: linux/arm/v7
             tag_suffix: armv7
-            dockerfile: Dockerfile-armv7  # 指定 armv7 专属的 Dockerfile
+            dockerfile: Dockerfile  # 指定 armv7 专属的 Dockerfile
 
     runs-on: ${{ matrix.runner }}
 
